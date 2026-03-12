@@ -162,7 +162,7 @@ def scrape_reddit_post(driver, post_url, subreddit):
         thumbnails_els = driver.find_elements(By.CSS_SELECTOR, ".entry .preview")
         thumbnails_urls = [el.get_attribute("src") for el in thumbnails_els]
     except Exception:
-        text = None
+        thumbnails_urls = None
 
     entry_dict = {
         "url": post_url,
@@ -243,48 +243,84 @@ def scrape_search(driver, keyword="ghibliai"):
 
 def scrape_pin(driver, pin_url):
     safe_get(driver, pin_url)
-    data_el = driver.find_element(By.XPATH, "//script[@type='application/json']")
-    data_text = data_el.get_attribute("innerHTML")
-    data = json.loads(data_text)
-    #print(json.dumps(data, indent=2))
-    pins_data = data["initialReduxState"]["pins"]
-    pin_data = next(iter(pins_data.values()), None)
-    id_ = next(iter(pins_data.keys()), None)
-    print("Pin ID", id_)
-    print("Date of Creation:", pin_data["created_at"])
-    created_at = pin_data["created_at"]
-    if pin_data["closeup_attribution"] is not None:
-        print("Username of Creator:", pin_data["closeup_attribution"]["username"])
-        username = pin_data["closeup_attribution"]["username"]
-        print("Username of Creator:", pin_data["closeup_attribution"]["follower_count"])
-        followers = pin_data["closeup_attribution"]["follower_count"]
-    else:
-        print("No data about Creator.")
-        username = None
-        followers = None
-    print("Auto Description:", pin_data["auto_alt_text"])
-    description = pin_data["auto_alt_text"]
-    print("Number of Likes:", pin_data["share_count"])
-    likes = pin_data["share_count"]
-    print("Dominant Color:", pin_data["dominant_color"])
-    color = pin_data["dominant_color"]
+
+    id_ = None
+    created_at = None
+    username = None
+    followers = None
+    description = None
+    likes = None
+    color = None
+
+    try:
+        data_el = driver.find_element(By.XPATH, "//script[@type='application/json']")
+        data_text = data_el.get_attribute("innerHTML")
+        data = json.loads(data_text)
+        pins_data = data.get("initialReduxState", {}).get("pins", {})
+        pin_data = next(iter(pins_data.values()), None)
+        id_ = next(iter(pins_data.keys()), None)
+    except Exception:
+        pin_data = None
+
+    if pin_data:
+        try:
+            print("Pin ID", id_)
+        except Exception:
+            pass
+
+        try:
+            created_at = pin_data.get("created_at")
+            print("Date of Creation:", created_at)
+        except Exception:
+            created_at = None
+
+        try:
+            attribution = pin_data.get("closeup_attribution")
+            if attribution is not None:
+                username = attribution.get("username")
+                followers = attribution.get("follower_count")
+                print("Username of Creator:", username)
+                print("Followers of Creator:", followers)
+            else:
+                print("No data about Creator.")
+        except Exception:
+            username = None
+            followers = None
+
+        try:
+            description = pin_data.get("auto_alt_text")
+            print("Auto Description:", description)
+        except Exception:
+            description = None
+
+        try:
+            likes = pin_data.get("share_count")
+            print("Number of Likes:", likes)
+        except Exception:
+            likes = None
+
+        try:
+            color = pin_data.get("dominant_color")
+            print("Dominant Color:", color)
+        except Exception:
+            color = None
+
     entry_dict = {
-                "id": id_,
-                "created_at": created_at,
-                "username": username,
-                "followers": followers,
-                "description": description,
-                "likes": likes,
-                "color": color
+        "id": id_,
+        "created_at": created_at,
+        "username": username,
+        "followers": followers,
+        "description": description,
+        "likes": likes,
+        "color": color,
     }
     return entry_dict
 
 
-if __name__ == "__main__":
-    print("\nSCRAPER")
-    print("=======\n")
-
-    # Configure Chrome options for Arch / google-chrome-stable
+def create_driver():
+    """
+    Create a Chrome WebDriver configured for Arch / google-chrome-stable.
+    """
     options = Options()
 
     # If google-chrome-stable is not on the default path for Selenium,
@@ -301,9 +337,15 @@ if __name__ == "__main__":
     # options.add_argument("--user-data-dir=/home/shoichi/.config/google-chrome")
     # options.add_argument("--profile-directory=Default")
 
-    # Recommended modern Selenium 4 way: use Service + webdriver_manager
     service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
+    return webdriver.Chrome(service=service, options=options)
+
+
+if __name__ == "__main__":
+    print("\nSCRAPER")
+    print("=======\n")
+
+    driver = create_driver()
 
     platform = input("Choose platform to scrape (pinterest/reddit): ").strip().lower()
     keyword = input("Enter keyword to search for: ").strip() or "ghibliai"
@@ -330,6 +372,22 @@ if __name__ == "__main__":
         print(f"\nTarget platform: Pinterest\nTarget keyword: {keyword}\n")
         print("Starting to scrape the Pinterest results page...\n")
         pins_url = scrape_search(driver=driver, keyword=keyword)
+
+        # Save discovered Pinterest URLs to a file
+        urls_path = "pinterest_urls.txt"
+        with open(urls_path, "w", encoding="utf-8") as f:
+            for url in pins_url:
+                f.write(url + "\n")
+        print(f"\nSaved {len(pins_url)} Pinterest URLs to {urls_path}.")
+
+        # Close current driver and reopen a new one before visiting each pin
+        driver.quit()
+        driver = create_driver()
+
+        # Reload URLs from file (source of truth)
+        with open(urls_path, "r", encoding="utf-8") as f:
+            pins_url = [line.strip() for line in f if line.strip()]
+
         print("\nVisiting each Pinterest pin and gathering data...\n")
         list_of_entries = []
         for result_idx, pin_url in enumerate(pins_url):
