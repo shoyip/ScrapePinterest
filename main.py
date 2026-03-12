@@ -6,6 +6,7 @@ import pandas as pd
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from urllib.parse import quote_plus
 
@@ -282,13 +283,27 @@ def scrape_pin(driver, pin_url):
 if __name__ == "__main__":
     print("\nSCRAPER")
     print("=======\n")
-    #options = Options()
-    #options.debugger_address = "localhost:9222"
-#    options.add_argument("--user-data-dir=/home/shoichi/.config/google-chrome")
-#    options.add_argument("--profile-directory=Default")
 
-    #driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
-    driver = webdriver.Chrome(ChromeDriverManager().install())
+    # Configure Chrome options for Arch / google-chrome-stable
+    options = Options()
+
+    # If google-chrome-stable is not on the default path for Selenium,
+    # explicitly point to it (this is the usual Arch path):
+    # options.binary_location = "/usr/bin/google-chrome-stable"
+
+    # If you want to attach to an already running Chrome with remote debugging:
+    # 1) Start Chrome manually, e.g.:
+    #    google-chrome-stable --remote-debugging-port=9222 --user-data-dir=/home/shoichi/.config/google-chrome-scraper
+    # 2) Uncomment the next line so Selenium attaches to that session:
+    # options.debugger_address = "localhost:9222"
+
+    # Optional: reuse a specific Chrome profile instead of a fresh one each time:
+    # options.add_argument("--user-data-dir=/home/shoichi/.config/google-chrome")
+    # options.add_argument("--profile-directory=Default")
+
+    # Recommended modern Selenium 4 way: use Service + webdriver_manager
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
 
     platform = input("Choose platform to scrape (pinterest/reddit): ").strip().lower()
     keyword = input("Enter keyword to search for: ").strip() or "ghibliai"
