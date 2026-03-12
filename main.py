@@ -242,79 +242,93 @@ def scrape_search(driver, keyword="ghibliai"):
 
 
 def scrape_pin(driver, pin_url):
-    safe_get(driver, pin_url)
+    max_attempts = 3
+    last_error = None
 
-    id_ = None
-    created_at = None
-    username = None
-    followers = None
-    description = None
-    likes = None
-    color = None
-
-    try:
-        data_el = driver.find_element(By.XPATH, "//script[@type='application/json']")
-        data_text = data_el.get_attribute("innerHTML")
-        data = json.loads(data_text)
-        pins_data = data.get("initialReduxState", {}).get("pins", {})
-        pin_data = next(iter(pins_data.values()), None)
-        id_ = next(iter(pins_data.keys()), None)
-    except Exception:
-        pin_data = None
-
-    if pin_data:
+    for attempt in range(1, max_attempts + 1):
         try:
+            driver.get(pin_url)
+            # Wait until the page reports it is fully loaded, with a small timeout
+            for _ in range(10):
+                try:
+                    state = driver.execute_script("return document.readyState")
+                except Exception:
+                    state = None
+                if state == "complete":
+                    break
+                time.sleep(0.5)
+
+            # Extra small wait to let dynamic JSON be injected
+            time.sleep(1.5)
+            data_el = driver.find_element(By.XPATH, "//script[@type='application/json']")
+            data_text = data_el.get_attribute("innerHTML")
+            data = json.loads(data_text)
+            # print(json.dumps(data, indent=2))
+            pins_data = data["initialReduxState"]["pins"]
+            pin_data = next(iter(pins_data.values()), None)
+            id_ = next(iter(pins_data.keys()), None)
             print("Pin ID", id_)
-        except Exception:
-            pass
-
-        try:
-            created_at = pin_data.get("created_at")
-            print("Date of Creation:", created_at)
-        except Exception:
-            created_at = None
-
-        try:
-            attribution = pin_data.get("closeup_attribution")
-            if attribution is not None:
-                username = attribution.get("username")
-                followers = attribution.get("follower_count")
-                print("Username of Creator:", username)
-                print("Followers of Creator:", followers)
+            print("Date of Creation:", pin_data["created_at"])
+            created_at = pin_data["created_at"]
+            if pin_data["closeup_attribution"] is not None:
+                print("Username of Creator:", pin_data["closeup_attribution"]["username"])
+                username = pin_data["closeup_attribution"]["username"]
+                print("Username of Creator:", pin_data["closeup_attribution"]["follower_count"])
+                followers = pin_data["closeup_attribution"]["follower_count"]
             else:
                 print("No data about Creator.")
-        except Exception:
-            username = None
-            followers = None
+                username = None
+                followers = None
+            print("Auto Description:", pin_data["auto_alt_text"])
+            description = pin_data["auto_alt_text"]
+            print("Number of Likes:", pin_data["share_count"])
+            likes = pin_data["share_count"]
+            print("Dominant Color:", pin_data["dominant_color"])
+            color = pin_data["dominant_color"]
+            entry_dict = {
+                        "id": id_,
+                        "created_at": created_at,
+                        "username": username,
+                        "followers": followers,
+                        "description": description,
+                        "likes": likes,
+                        "color": color
+            }
+            return entry_dict
 
-        try:
-            description = pin_data.get("auto_alt_text")
-            print("Auto Description:", description)
-        except Exception:
-            description = None
+        except KeyError as e:
+            last_error = e
+            print(
+                f"KeyError while parsing Pinterest JSON on attempt {attempt} "
+                f"for {pin_url}: {e}. Refreshing and retrying..."
+            )
+            try:
+                driver.refresh()
+            except Exception:
+                pass
+            time.sleep(2)
+            continue
+        except Exception as e:
+            last_error = e
+            print(f"Unexpected error while scraping pin {pin_url} on attempt {attempt}: {e}")
+            try:
+                driver.refresh()
+            except Exception:
+                pass
+            time.sleep(2)
+            continue
 
-        try:
-            likes = pin_data.get("share_count")
-            print("Number of Likes:", likes)
-        except Exception:
-            likes = None
-
-        try:
-            color = pin_data.get("dominant_color")
-            print("Dominant Color:", color)
-        except Exception:
-            color = None
-
-    entry_dict = {
-        "id": id_,
-        "created_at": created_at,
-        "username": username,
-        "followers": followers,
-        "description": description,
-        "likes": likes,
-        "color": color,
+    print(f"Failed to scrape pin {pin_url} after {max_attempts} attempts. "
+          f"Last error: {last_error}. Returning null values.")
+    return {
+        "id": None,
+        "created_at": None,
+        "username": None,
+        "followers": None,
+        "description": None,
+        "likes": None,
+        "color": None,
     }
-    return entry_dict
 
 
 def create_driver():
@@ -327,11 +341,16 @@ def create_driver():
     # explicitly point to it (this is the usual Arch path):
     # options.binary_location = "/usr/bin/google-chrome-stable"
 
-    # If you want to attach to an already running Chrome with remote debugging:
-    # 1) Start Chrome manually, e.g.:
-    #    google-chrome-stable --remote-debugging-port=9222 --user-data-dir=/home/shoichi/.config/google-chrome-scraper
-    # 2) Uncomment the next line so Selenium attaches to that session:
-    # options.debugger_address = "localhost:9222"
+    use_remote_debug = input(
+        "Attach to existing Chrome on port 9222? (y/n): "
+    ).strip().lower() == "y"
+
+    if use_remote_debug:
+        # Attach to an already running Chrome with remote debugging:
+        # 1) Start Chrome manually, e.g.:
+        #    google-chrome-stable --remote-debugging-port=9222 --user-data-dir=/home/shoichi/.config/google-chrome-scraper
+        # 2) This debugger_address makes Selenium connect to that session:
+        options.debugger_address = "localhost:9222"
 
     # Optional: reuse a specific Chrome profile instead of a fresh one each time:
     # options.add_argument("--user-data-dir=/home/shoichi/.config/google-chrome")
