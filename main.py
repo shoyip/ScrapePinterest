@@ -3,6 +3,7 @@ import json
 import random
 import pandas as pd
 
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -281,12 +282,13 @@ def scrape_pin(driver, pin_url):
 if __name__ == "__main__":
     print("\nSCRAPER")
     print("=======\n")
-    options = Options()
-    options.debugger_address = "localhost:9222"
+    #options = Options()
+    #options.debugger_address = "localhost:9222"
 #    options.add_argument("--user-data-dir=/home/shoichi/.config/google-chrome")
 #    options.add_argument("--profile-directory=Default")
 
-    driver = webdriver.Chrome(options=options)
+    #driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+    driver = webdriver.Chrome(ChromeDriverManager().install())
 
     platform = input("Choose platform to scrape (pinterest/reddit): ").strip().lower()
     keyword = input("Enter keyword to search for: ").strip() or "ghibliai"
