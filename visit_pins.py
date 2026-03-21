@@ -87,7 +87,8 @@ def scrape_pin(driver, pin_url: str):
                 time.sleep(0.5)
 
             # Extra small wait to let dynamic JSON be injected
-            time.sleep(1.5)
+            time.sleep(2)
+            driver.execute_script("window.scrollBy(0, 547);")
             data_el = driver.find_element(By.XPATH, "//script[@type='application/json']")
             data_text = data_el.get_attribute("innerHTML")
             data = json.loads(data_text)
@@ -178,23 +179,114 @@ def main():
         print("No URLs found in pinterest_urls.txt.")
         return
 
+    # --- ID helpers ---------------------------------------------------------
+    def normalize_id(value):
+        if value is None:
+            return None
+        s = str(value).strip()
+        if not s:
+            return None
+        try:
+            return str(int(s))
+        except Exception:
+            return s
+
+    def id_from_url(url: str):
+        if not url:
+            return None
+        raw = str(url).split("?", 1)[0].split("#", 1)[0]
+        parts = [p for p in raw.split("/") if p]
+        if len(parts) < 2:
+            return None
+        cand = parts[-1] if parts[-1].isdigit() else parts[-2]
+        return normalize_id(cand)
+
+    # Load existing results if any, clean them up, and build a visited ID set.
+    results_path = Path("pinterest_pins_output.csv")
+    existing_df = None
+    visited_ids = set()
+    if results_path.exists():
+        try:
+            existing_df = pd.read_csv(results_path)
+
+            wanted_cols = ["id", "created_at", "username", "followers", "description", "likes", "color", "url"]
+            existing_df = existing_df[[c for c in existing_df.columns if c in wanted_cols]]
+
+            if "url" in existing_df.columns:
+                existing_df["url"] = existing_df["url"].astype(str)
+
+            if "id" not in existing_df.columns:
+                existing_df["id"] = None
+
+            def fill_id(row):
+                cur_id = row.get("id")
+                if pd.isna(cur_id) or cur_id is None or str(cur_id).strip() == "":
+                    return id_from_url(row.get("url"))
+                return normalize_id(cur_id)
+
+            existing_df["id"] = existing_df.apply(fill_id, axis=1)
+            existing_df["id_norm"] = existing_df["id"].apply(normalize_id)
+            existing_df = existing_df[existing_df["id_norm"].notna()]
+            existing_df = existing_df.drop_duplicates(subset=["id_norm"], keep="last")
+
+            visited_ids = set(existing_df["id_norm"].tolist())
+            print(f"Loaded {len(visited_ids)} existing unique pin IDs from {results_path}.")
+        except Exception as e:
+            print(f"Could not read existing results from {results_path}: {e}")
+
     driver = create_driver()
 
-    entries = []
+    # We will accumulate new/updated entries in this list
+    new_entries = []
+
     try:
         for idx, url in enumerate(pins_url):
-            print(f"\nVisiting Pinterest pin #{idx}: {url}")
-            entry = scrape_pin(driver, url)
-            entry["url"] = url
-            entries.append(entry)
-            human_sleep()
+            url = str(url)
+            pin_id = id_from_url(url)
+
+            already_visited = pin_id is not None and pin_id in visited_ids
+            print(f"\n[DEBUG] index={idx}, url={url}, id={pin_id}, id_in_csv={already_visited}")
+
+            if already_visited:
+                print("Action: SKIP (ID already scraped)")
+                continue
+
+            print("Action: VISIT (new or ID-less pin)")
+
+            try:
+                entry = scrape_pin(driver, url)
+                entry["url"] = url
+                scraped_id = normalize_id(entry.get("id")) or pin_id
+                entry["id"] = scraped_id
+                if scraped_id is not None:
+                    visited_ids.add(scraped_id)
+                new_entries.append(entry)
+                human_sleep()
+            except KeyboardInterrupt:
+                print("\nStopping pin visit due to keyboard interrupt.")
+                break
     finally:
         driver.quit()
 
-    if entries:
-        df = pd.DataFrame(entries)
-        df.set_index("id", inplace=False).to_csv("pinterest_pins_output.csv", index=False)
-        print(f"\nSaved {len(entries)} Pinterest pin records to pinterest_pins_output.csv.")
+    if new_entries or existing_df is not None:
+        # Combine existing rows (if any) with new ones, then deduplicate by normalized ID.
+        if existing_df is not None:
+            existing_df = existing_df.drop(columns=[c for c in existing_df.columns if c == "id_norm"], errors="ignore")
+            combined_df = pd.concat(
+                [existing_df, pd.DataFrame(new_entries)],
+                ignore_index=True
+            )
+        else:
+            combined_df = pd.DataFrame(new_entries)
+
+        if "id" in combined_df.columns:
+            combined_df["id_norm"] = combined_df["id"].apply(normalize_id)
+            combined_df = combined_df[combined_df["id_norm"].notna()]
+            combined_df = combined_df.drop_duplicates(subset=["id_norm"], keep="last")
+            combined_df = combined_df.drop(columns=["id_norm"])
+
+        combined_df.set_index("id", inplace=False).to_csv(results_path, index=False)
+        print(f"\nSaved {len(combined_df)} Pinterest pin records to {results_path}.")
     else:
         print("No pin data scraped.")
 
